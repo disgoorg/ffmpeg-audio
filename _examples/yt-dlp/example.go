@@ -3,20 +3,21 @@ package main
 import (
 	"bufio"
 	"context"
+	"os"
+	"os/exec"
+	"os/signal"
+	"syscall"
+
 	"github.com/disgoorg/disgo"
 	"github.com/disgoorg/disgo/bot"
 	"github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/disgo/gateway"
 	"github.com/disgoorg/disgo/handler"
 	"github.com/disgoorg/disgo/voice"
+	"github.com/disgoorg/ffmpeg-audio"
 	"github.com/disgoorg/json"
 	"github.com/disgoorg/log"
 	"github.com/disgoorg/snowflake/v2"
-	"githubv.com/disgo/ffmpeg-audio"
-	"os"
-	"os/exec"
-	"os/signal"
-	"syscall"
 )
 
 var (

@@ -12,9 +12,9 @@ import (
 	"github.com/disgoorg/disgo/events"
 	"github.com/disgoorg/disgo/gateway"
 	"github.com/disgoorg/disgo/voice"
+	"github.com/disgoorg/ffmpeg-audio"
 	"github.com/disgoorg/log"
 	"github.com/disgoorg/snowflake/v2"
-	"githubv.com/disgo/ffmpeg-audio"
 )
 
 var (
