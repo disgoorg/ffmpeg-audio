@@ -2,6 +2,7 @@ package ffmpeg
 
 import (
 	"bufio"
+	"context"
 	"io"
 	"os/exec"
 	"strconv"
@@ -20,11 +21,11 @@ const (
 
 var _ voice.OpusFrameProvider = (*AudioProvider)(nil)
 
-func New(r io.Reader, opts ...ConfigOpt) (*AudioProvider, error) {
+func New(ctx context.Context, r io.Reader, opts ...ConfigOpt) (*AudioProvider, error) {
 	cfg := DefaultConfig()
 	cfg.Apply(opts)
 
-	cmd := exec.Command(cfg.Exec,
+	cmd := exec.CommandContext(ctx, cfg.Exec,
 		"-i",
 		"pipe:0",
 		"-c:a", "libopus",
