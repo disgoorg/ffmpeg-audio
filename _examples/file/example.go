@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -12,9 +13,9 @@ import (
 	"github.com/disgoorg/disgo/events"
 	"github.com/disgoorg/disgo/gateway"
 	"github.com/disgoorg/disgo/voice"
-	"github.com/disgoorg/ffmpeg-audio"
-	"github.com/disgoorg/log"
 	"github.com/disgoorg/snowflake/v2"
+
+	"github.com/disgoorg/ffmpeg-audio"
 )
 
 var (
@@ -24,9 +25,8 @@ var (
 )
 
 func main() {
-	log.SetLevel(log.LevelInfo)
-	log.SetFlags(log.LstdFlags | log.Llongfile)
-	log.Info("starting up")
+	slog.SetLogLoggerLevel(slog.LevelDebug)
+	slog.Info("starting up")
 
 	s := make(chan os.Signal, 1)
 
@@ -37,7 +37,8 @@ func main() {
 		}),
 	)
 	if err != nil {
-		log.Fatal("error creating client: ", err)
+		slog.Error("error creating client", slog.Any("err", err))
+		return
 	}
 
 	defer func() {
@@ -47,10 +48,11 @@ func main() {
 	}()
 
 	if err = client.OpenGateway(context.TODO()); err != nil {
-		log.Fatal("error connecting to gateway: ", err)
+		slog.Error("error connecting to gateway", slog.Any("err", err))
+		return
 	}
 
-	log.Info("ExampleBot is now running. Press CTRL-C to exit.")
+	slog.Info("ExampleBot is now running. Press CTRL-C to exit.")
 	signal.Notify(s, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
 	<-s
 }
@@ -73,19 +75,28 @@ func play(client bot.Client, closeChan chan os.Signal) {
 		panic("error setting speaking flag: " + err.Error())
 	}
 
-	file, err := os.Open("test.mp3")
-	if err != nil {
-		panic("error opening file: " + err.Error())
+	defer func() {
+		closeChan <- syscall.SIGTERM
+	}()
+
+	for {
+		func() {
+			file, err := os.Open("test.mp3")
+			if err != nil {
+				panic("error opening file: " + err.Error())
+			}
+
+			opusProvider, err := ffmpeg.New(context.Background(), file)
+			if err != nil {
+				panic("error creating opus provider: " + err.Error())
+			}
+			defer opusProvider.Close()
+
+			conn.SetOpusFrameProvider(opusProvider)
+			if err = opusProvider.Wait(); err != nil {
+				panic("error waiting for opus provider: " + err.Error())
+			}
+		}()
 	}
 
-	opusProvider, err := ffmpeg.New(file)
-	if err != nil {
-		panic("error creating opus provider: " + err.Error())
-	}
-	defer opusProvider.Close()
-
-	conn.SetOpusFrameProvider(opusProvider)
-
-	_ = opusProvider.Wait()
-	closeChan <- syscall.SIGTERM
 }
