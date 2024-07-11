@@ -3,9 +3,13 @@ package ffmpeg
 import (
 	"bufio"
 	"context"
+	"errors"
+	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strconv"
+	"sync"
 
 	"github.com/disgoorg/disgo/voice"
 	"github.com/jonas747/ogg"
@@ -46,25 +50,34 @@ func New(ctx context.Context, r io.Reader, opts ...ConfigOpt) (*AudioProvider, e
 		return nil, err
 	}
 
+	done, doneFunc := context.WithCancel(context.Background())
 	return &AudioProvider{
-		cmd:    cmd,
-		source: r,
-		pipe:   pipe,
-		d:      ogg.NewPacketDecoder(ogg.NewDecoder(bufio.NewReaderSize(pipe, cfg.BufferSize))),
+		cmd:      cmd,
+		source:   r,
+		pipe:     pipe,
+		d:        ogg.NewPacketDecoder(ogg.NewDecoder(bufio.NewReaderSize(pipe, cfg.BufferSize))),
+		done:     done,
+		doneFunc: doneFunc,
 	}, nil
 }
 
 type AudioProvider struct {
-	cmd    *exec.Cmd
-	source io.Reader
-	pipe   io.Closer
-	d      *ogg.PacketDecoder
+	cmd      *exec.Cmd
+	source   io.Reader
+	pipe     io.Closer
+	d        *ogg.PacketDecoder
+	done     context.Context
+	doneFunc context.CancelFunc
 }
 
 func (p *AudioProvider) ProvideOpusFrame() ([]byte, error) {
 	data, _, err := p.d.Decode()
 	if err != nil {
-		return nil, err
+		if errors.Is(err, io.EOF) || errors.Is(err, os.ErrClosed) {
+			p.doneFunc()
+			return nil, io.EOF
+		}
+		return nil, fmt.Errorf("error decoding ogg packet: %w", err)
 	}
 
 	return data, nil
@@ -75,8 +88,24 @@ func (p *AudioProvider) Close() {
 		_ = c.Close()
 	}
 	_ = p.pipe.Close()
+	p.doneFunc()
 }
 
 func (p *AudioProvider) Wait() error {
-	return p.cmd.Wait()
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<-p.done.Done()
+	}()
+
+	var err error
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		err = p.cmd.Wait()
+	}()
+
+	wg.Wait()
+	return err
 }
