@@ -69,7 +69,7 @@ type AudioProvider struct {
 func (p *AudioProvider) ProvideOpusFrame() ([]byte, error) {
 	data, _, err := p.d.Decode()
 	if err != nil {
-		if errors.Is(err, io.EOF) || errors.Is(err, os.ErrClosed) || err.Error() == "io: read/write on closed pipe" {
+		if errors.Is(err, io.EOF) || errors.Is(err, os.ErrClosed) || errors.Is(err, io.ErrClosedPipe) {
 			p.doneFunc()
 			return nil, io.EOF
 		}
