@@ -29,42 +29,38 @@ func New(ctx context.Context, r io.Reader, opts ...ConfigOpt) (*AudioProvider, e
 	cfg := DefaultConfig()
 	cfg.Apply(opts)
 
+	pr, pw := io.Pipe()
 	cmd := exec.CommandContext(ctx, cfg.Exec,
-		"-i",
-		"pipe:0",
+		"-i", "pipe:0",
 		"-c:a", "libopus",
 		"-ac", strconv.Itoa(cfg.Channels),
 		"-ar", strconv.Itoa(cfg.SampleRate),
 		"-f", "ogg",
-		"-b:a",
-		"96K",
+		"-b:a", "96K",
 		"pipe:1",
 	)
 	cmd.Stdin = r
-	pipe, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, err
-	}
+	cmd.Stdout = pw
 
-	if err = cmd.Start(); err != nil {
-		return nil, err
-	}
+	go func() {
+		if err := cmd.Run(); err != nil {
+			pw.CloseWithError(err)
+			return
+		}
+		pw.Close()
+	}()
 
 	done, doneFunc := context.WithCancel(context.Background())
 	return &AudioProvider{
-		cmd:      cmd,
-		source:   r,
-		pipe:     pipe,
-		d:        ogg.NewPacketDecoder(ogg.NewDecoder(bufio.NewReaderSize(pipe, cfg.BufferSize))),
+		source:   pr,
+		d:        ogg.NewPacketDecoder(ogg.NewDecoder(bufio.NewReaderSize(pr, cfg.BufferSize))),
 		done:     done,
 		doneFunc: doneFunc,
 	}, nil
 }
 
 type AudioProvider struct {
-	cmd      *exec.Cmd
 	source   io.Reader
-	pipe     io.Closer
 	d        *ogg.PacketDecoder
 	done     context.Context
 	doneFunc context.CancelFunc
@@ -73,7 +69,7 @@ type AudioProvider struct {
 func (p *AudioProvider) ProvideOpusFrame() ([]byte, error) {
 	data, _, err := p.d.Decode()
 	if err != nil {
-		if errors.Is(err, io.EOF) || errors.Is(err, os.ErrClosed) {
+		if errors.Is(err, io.EOF) || errors.Is(err, os.ErrClosed) || err.Error() == "io: read/write on closed pipe" {
 			p.doneFunc()
 			return nil, io.EOF
 		}
@@ -87,7 +83,6 @@ func (p *AudioProvider) Close() {
 	if c, ok := p.source.(io.Closer); ok {
 		_ = c.Close()
 	}
-	_ = p.pipe.Close()
 	p.doneFunc()
 }
 
@@ -99,13 +94,6 @@ func (p *AudioProvider) Wait() error {
 		<-p.done.Done()
 	}()
 
-	var err error
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		err = p.cmd.Wait()
-	}()
-
 	wg.Wait()
-	return err
+	return nil
 }
