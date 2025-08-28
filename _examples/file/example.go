@@ -29,7 +29,6 @@ func main() {
 	slog.Info("starting up")
 
 	s := make(chan os.Signal, 1)
-
 	client, err := disgo.New(token,
 		bot.WithGatewayConfigOpts(gateway.WithIntents(gateway.IntentGuildVoiceStates)),
 		bot.WithEventListenerFunc(func(e *events.Ready) {
@@ -86,11 +85,7 @@ func play(client bot.Client, closeChan chan os.Signal) {
 				panic("error opening file: " + err.Error())
 			}
 
-			opusProvider, err := ffmpeg.New(context.Background(), file)
-			if err != nil {
-				panic("error creating opus provider: " + err.Error())
-			}
-			defer opusProvider.Close()
+			opusProvider := ffmpeg.New(context.Background(), file)
 
 			conn.SetOpusFrameProvider(opusProvider)
 			if err = opusProvider.Wait(); err != nil {
