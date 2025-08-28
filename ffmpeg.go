@@ -68,8 +68,9 @@ type AudioProvider struct {
 func (p *AudioProvider) ProvideOpusFrame() ([]byte, error) {
 	data, _, err := p.d.Decode()
 	if err != nil {
+		p.doneFunc()
+
 		if errors.Is(err, io.EOF) || errors.Is(err, os.ErrClosed) || errors.Is(err, io.ErrClosedPipe) {
-			p.doneFunc()
 			return nil, io.EOF
 		}
 		return nil, fmt.Errorf("error decoding ogg packet: %w", err)
