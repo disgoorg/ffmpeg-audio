@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -12,7 +14,6 @@ import (
 	"github.com/disgoorg/disgo/bot"
 	"github.com/disgoorg/disgo/events"
 	"github.com/disgoorg/disgo/gateway"
-	"github.com/disgoorg/disgo/voice"
 	"github.com/disgoorg/snowflake/v2"
 
 	"github.com/disgoorg/ffmpeg-audio"
@@ -28,12 +29,10 @@ func main() {
 	slog.SetLogLoggerLevel(slog.LevelDebug)
 	slog.Info("starting up")
 
-	s := make(chan os.Signal, 1)
-
 	client, err := disgo.New(token,
 		bot.WithGatewayConfigOpts(gateway.WithIntents(gateway.IntentGuildVoiceStates)),
 		bot.WithEventListenerFunc(func(e *events.Ready) {
-			go play(e.Client(), s)
+			go play(e.Client())
 		}),
 	)
 	if err != nil {
@@ -53,50 +52,48 @@ func main() {
 	}
 
 	slog.Info("ExampleBot is now running. Press CTRL-C to exit.")
+	s := make(chan os.Signal, 1)
 	signal.Notify(s, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
 	<-s
 }
 
-func play(client bot.Client, closeChan chan os.Signal) {
-	conn := client.VoiceManager().CreateConn(guildID)
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
-	defer cancel()
-	if err := conn.Open(ctx, channelID, false, false); err != nil {
-		panic("error connecting to voice channel: " + err.Error())
-	}
-	defer func() {
-		closeCtx, closeCancel := context.WithTimeout(context.Background(), time.Second*10)
-		defer closeCancel()
-		conn.Close(closeCtx)
-	}()
-
-	if err := conn.SetSpeaking(ctx, voice.SpeakingFlagMicrophone); err != nil {
-		panic("error setting speaking flag: " + err.Error())
-	}
-
-	defer func() {
-		closeChan <- syscall.SIGTERM
-	}()
-
+func play(client *bot.Client) {
 	for {
-		func() {
-			file, err := os.Open("test.mp3")
-			if err != nil {
-				panic("error opening file: " + err.Error())
-			}
+		if err := PlaySound(context.Background(), client, guildID, channelID, "https://cdn.discordapp.com/soundboard-sounds/1394685689790206032"); err != nil {
+			slog.Error("error playing sound", slog.Any("err", err))
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
 
-			opusProvider, err := ffmpeg.New(context.Background(), file)
-			if err != nil {
-				panic("error creating opus provider: " + err.Error())
-			}
-			defer opusProvider.Close()
+func PlaySound(ctx context.Context, client *bot.Client, guildID, channelID snowflake.ID, url string) error {
+	conn := client.VoiceManager.CreateConn(guildID)
 
-			conn.SetOpusFrameProvider(opusProvider)
-			if err = opusProvider.Wait(); err != nil {
-				panic("error waiting for opus provider: " + err.Error())
-			}
-		}()
+	if err := conn.Open(ctx, channelID, false, true); err != nil {
+		return fmt.Errorf("error connecting to voice channel: %w", err)
 	}
 
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		conn.Close(cleanupCtx)
+	}()
+
+	rs, err := http.Get(url)
+	if err != nil {
+		return fmt.Errorf("error opening sound URL: %w", err)
+	}
+	defer rs.Body.Close()
+
+	// Stream through ffmpeg to get Opus frames
+	opusProvider := ffmpeg.New(ctx, rs.Body, ffmpeg.WithExec("ffmpeg"))
+
+	conn.SetOpusFrameProvider(opusProvider)
+
+	if err := opusProvider.Wait(); err != nil {
+		fmt.Printf("opus provider wait error: %T: %v\n", err, err)
+		return fmt.Errorf("error waiting for opus provider: %w", err)
+	}
+
+	return nil
 }
