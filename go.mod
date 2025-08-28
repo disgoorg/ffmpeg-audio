@@ -1,10 +1,13 @@
 module github.com/disgoorg/ffmpeg-audio
 
-go 1.22
+go 1.23.0
+
+toolchain go1.24.2
 
 require (
 	github.com/disgoorg/disgo v0.18.8
 	github.com/jonas747/ogg v0.0.0-20161220051205-b4f6f4cf3757
+	golang.org/x/sync v0.16.0
 )
 
 require (

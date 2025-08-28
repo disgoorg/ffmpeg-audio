@@ -9,10 +9,10 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
-	"sync"
 
 	"github.com/disgoorg/disgo/voice"
 	"github.com/jonas747/ogg"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -25,7 +25,7 @@ const (
 
 var _ voice.OpusFrameProvider = (*AudioProvider)(nil)
 
-func New(ctx context.Context, r io.Reader, opts ...ConfigOpt) (*AudioProvider, error) {
+func NewFFMPEG(ctx context.Context, r io.Reader, opts ...ConfigOpt) (*AudioProvider, error) {
 	cfg := DefaultConfig()
 	cfg.Apply(opts)
 
@@ -42,28 +42,27 @@ func New(ctx context.Context, r io.Reader, opts ...ConfigOpt) (*AudioProvider, e
 	cmd.Stdin = r
 	cmd.Stdout = pw
 
-	go func() {
-		if err := cmd.Run(); err != nil {
-			pw.CloseWithError(err)
-			return
-		}
-		pw.Close()
-	}()
-
 	done, doneFunc := context.WithCancel(context.Background())
 	return &AudioProvider{
-		source:   pr,
+		reader: pr,
+		writer: pw,
+
 		d:        ogg.NewPacketDecoder(ogg.NewDecoder(bufio.NewReaderSize(pr, cfg.BufferSize))),
 		done:     done,
 		doneFunc: doneFunc,
+		cmd:      cmd,
 	}, nil
 }
 
 type AudioProvider struct {
-	source   io.Reader
+	reader *io.PipeReader
+	writer *io.PipeWriter
+
 	d        *ogg.PacketDecoder
 	done     context.Context
 	doneFunc context.CancelFunc
+
+	cmd *exec.Cmd
 }
 
 func (p *AudioProvider) ProvideOpusFrame() ([]byte, error) {
@@ -80,20 +79,25 @@ func (p *AudioProvider) ProvideOpusFrame() ([]byte, error) {
 }
 
 func (p *AudioProvider) Close() {
-	if c, ok := p.source.(io.Closer); ok {
-		_ = c.Close()
+	if err := p.reader.Close(); err != nil {
+		// ignore error
 	}
 	p.doneFunc()
 }
 
 func (p *AudioProvider) Wait() error {
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		<-p.done.Done()
-	}()
+	var eg errgroup.Group
+	eg.Go(func() error {
+		if err := p.cmd.Run(); err != nil {
+			return errors.Join(err, p.writer.CloseWithError(err))
+		}
+		return p.writer.Close()
+	})
 
-	wg.Wait()
-	return nil
+	eg.Go(func() (err error) {
+		<-p.done.Done()
+		return
+	})
+
+	return eg.Wait()
 }
